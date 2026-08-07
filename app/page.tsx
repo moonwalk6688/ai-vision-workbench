@@ -12,6 +12,14 @@ type Task = {
   done: boolean;
 };
 
+type PromptRecord = {
+  id: number;
+  mode: "image" | "video";
+  idea: string;
+  prompt: string;
+  createdAt: string;
+};
+
 const starterTasks: Task[] = [
   { id: 1, title: "完成公司七夕活动主视觉初稿", project: "企业设计", due: "今天 16:00", priority: "紧急", done: false },
   { id: 2, title: "整理周末人像拍摄选片", project: "摄影副业", due: "今晚", priority: "重要", done: false },
@@ -39,16 +47,23 @@ export default function Home() {
   const [style, setStyle] = useState("商业摄影");
   const [ratio, setRatio] = useState("4:5");
   const [prompt, setPrompt] = useState("");
+  const [promptHistory, setPromptHistory] = useState<PromptRecord[]>([]);
   const [copied, setCopied] = useState(false);
+  const [backupNotice, setBackupNotice] = useState("");
   const [activeNav, setActiveNav] = useState("今日工作");
   const [pulseTime, setPulseTime] = useState("刚刚整理");
   const [hydrated, setHydrated] = useState(false);
   const promptRef = useRef<HTMLElement | null>(null);
+  const importRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("vision-desk-tasks");
     if (saved) {
       try { setTasks(JSON.parse(saved)); } catch { /* keep starter data */ }
+    }
+    const savedPrompts = window.localStorage.getItem("vision-desk-prompts");
+    if (savedPrompts) {
+      try { setPromptHistory(JSON.parse(savedPrompts)); } catch { /* keep empty history */ }
     }
     setHydrated(true);
   }, []);
@@ -56,6 +71,10 @@ export default function Home() {
   useEffect(() => {
     if (hydrated) window.localStorage.setItem("vision-desk-tasks", JSON.stringify(tasks));
   }, [tasks, hydrated]);
+
+  useEffect(() => {
+    if (hydrated) window.localStorage.setItem("vision-desk-prompts", JSON.stringify(promptHistory));
+  }, [promptHistory, hydrated]);
 
   const openCount = tasks.filter((task) => !task.done).length;
   const urgentCount = tasks.filter((task) => !task.done && task.priority === "紧急").length;
@@ -83,7 +102,38 @@ export default function Home() {
       ? `【主体与目的】${cleanIdea}\n【视觉方向】${style}，真实材质，专业构图，主体信息明确\n【画面设计】前中后景层次清晰，保留标题与品牌信息安全区，避免杂乱背景和无意义装饰\n【光线与色彩】柔和定向光，克制配色，高级但不过度奢华\n【输出】${ratio} 画幅，商业可用，高分辨率，无乱码、无多余文字、无水印`
       : `【镜头目标】${cleanIdea}\n【时长】6 秒，单一核心动作，不在一个镜头内塞入过多事件\n【镜头设计】${style}；中景开场，镜头缓慢推进，主体完成一个连续动作，结尾稳定停留 1 秒\n【动态要求】动作自然、有重量感，人物与产品结构保持一致，避免突然变形、穿模和镜头跳切\n【光线与声音】环境光方向稳定，保留真实环境音，可后配音乐\n【输出】${ratio} 画幅，可作为成片素材，首尾帧连续`;
     setPrompt(nextPrompt);
+    setPromptHistory((current) => [{
+      id: Date.now(), mode: promptMode, idea: cleanIdea, prompt: nextPrompt,
+      createdAt: new Date().toLocaleString("zh-CN"),
+    }, ...current].slice(0, 30));
     setCopied(false);
+  }
+
+  function exportBackup() {
+    const data = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), tasks, promptHistory }, null, 2);
+    const url = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `视觉舱备份-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setBackupNotice("备份文件已下载");
+    window.setTimeout(() => setBackupNotice(""), 2200);
+  }
+
+  async function importBackup(file?: File) {
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (!Array.isArray(data.tasks) || !Array.isArray(data.promptHistory)) throw new Error("invalid backup");
+      setTasks(data.tasks);
+      setPromptHistory(data.promptHistory);
+      setBackupNotice("数据已恢复到当前电脑");
+    } catch {
+      setBackupNotice("无法识别这个备份文件");
+    }
+    if (importRef.current) importRef.current.value = "";
+    window.setTimeout(() => setBackupNotice(""), 2600);
   }
 
   async function copyPrompt() {
@@ -172,6 +222,18 @@ export default function Home() {
                   <div className="api-bar"><span><i /> API 接口已预留</span><button disabled>连接模型后生成</button></div>
                 </div>
               </div>
+              {promptHistory.length > 0 && (
+                <div className="prompt-history">
+                  <div><span>最近使用</span><small>本机保存 {promptHistory.length} 条</small></div>
+                  <div className="history-items">
+                    {promptHistory.slice(0, 3).map((item) => (
+                      <button key={item.id} onClick={() => { setPromptMode(item.mode); setIdea(item.idea); setPrompt(item.prompt); }}>
+                        <b>{item.mode === "image" ? "图片" : "视频"}</b><span>{item.idea}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </article>
           </div>
 
@@ -189,6 +251,15 @@ export default function Home() {
               <div className="panel-heading compact"><div><span className="eyebrow">PLAYBOOK</span><h2>今日提示词技巧</h2></div><span className="lesson">01 / 05</span></div>
               <div className="lesson-card"><span>视频提示词</span><h3>一个镜头，只安排一个核心动作</h3><p>先写主体做什么，再写镜头如何观察，最后补充时长、光线和声音。6 秒镜头不要塞入三个情节转折。</p><div className="formula"><span>主体</span><b>＋</b><span>动作</span><b>＋</b><span>镜头</span><b>＋</b><span>时间</span></div></div>
               <button className="wide-ghost" onClick={() => { setPromptMode("video"); setIdea("一只旅行箱在机场地面平稳拖行，展示轮组稳定性"); promptRef.current?.scrollIntoView({ behavior: "smooth" }); }}>立即练习这个方法</button>
+            </article>
+
+            <article className="panel local-panel">
+              <div className="panel-heading compact"><div><span className="eyebrow">LOCAL FIRST</span><h2>本地数据与迁移</h2></div><span className="local-badge">仅此设备</span></div>
+              <p>任务和提示词保存在当前浏览器。回家使用时，先导出一个备份文件，再在家里的工作台中导入。</p>
+              <div className="transfer-flow"><span>公司电脑</span><b>备份文件 →</b><span>家里电脑</span></div>
+              <div className="backup-actions"><button onClick={exportBackup}>↓ 导出备份</button><button onClick={() => importRef.current?.click()}>↑ 导入恢复</button></div>
+              <input ref={importRef} className="hidden-file" type="file" accept="application/json,.json" onChange={(event) => importBackup(event.target.files?.[0])} />
+              {backupNotice && <div className="backup-notice" role="status">{backupNotice}</div>}
             </article>
           </div>
         </section>
